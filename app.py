@@ -1,47 +1,75 @@
-from flask import Flask,render_template,request
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import streamlit as st
 import pickle
-import numpy as np
 
-popular_df = pickle.load(open('popular.pkl','rb'))
-pt = pickle.load(open('pt.pkl','rb'))
-books = pickle.load(open('books.pkl','rb'))
-similarity_scores = pickle.load(open('similarity_scores.pkl','rb'))
+# Sample DataFrame
+data = {
+    'Title': [
+        'Fundamentals of Wavelets', 'Data Smart', 'God Created the Integers',
+        'Superfreakonomics', 'Orientalism', 'Structure and Randomness',
+        'Image Processing with MATLAB', 'Animal Farm', 'Idiot, The', 'Christmas Carol, A'
+    ],
+    'Author': [
+        'Goswami, Jaideva', 'Foreman, John', 'Hawking, Stephen',
+        'Dubner, Stephen', 'Said, Edward', 'Tao, Terence',
+        'Eddins, Steve', 'Orwell, George', 'Dostoevsky, Fyodor', 'Dickens, Charles'
+    ],
+    'Genre': [
+        'signal_processing', 'data_science', 'mathematics',
+        'economics', 'history', 'mathematics',
+        'signal_processing', 'fiction', 'fiction', 'fiction'
+    ],
+    'Height': [
+        228, 235, 197, 179, 197, 252, 241, 180, 197, 196
+    ],
+    'Publisher': [
+        'Wiley', 'Wiley', 'Penguin', 'HarperCollins', 'Penguin', 'NaN', 'NaN', 'NaN', 'NaN', 'NaN'
+    ]
+}
 
-app = Flask(__name__)
+df = pd.DataFrame(data)
 
-@app.route('/')
-def index():
-    return render_template('index.html',
-                           book_name = list(popular_df['Book-Title'].values),
-                           author=list(popular_df['Book-Author'].values),
-                           image=list(popular_df['Image-URL-M'].values),
-                           votes=list(popular_df['num_ratings'].values),
-                           rating=list(popular_df['avg_rating'].values)
-                           )
+# Combine features
+df['combined_features'] = df['Title'] + ' ' + df['Author'] + ' ' + df['Genre'] + ' ' + df['Publisher'].fillna('') + ' ' + df['Height'].astype(str)
 
-@app.route('/recommend')
-def recommend_ui():
-    return render_template('recommend.html')
+# Vectorization
+vectorizer = TfidfVectorizer()
+tfidf_matrix = vectorizer.fit_transform(df['combined_features'])
 
-@app.route('/recommend_books',methods=['post'])
-def recommend():
-    user_input = request.form.get('user_input')
-    index = np.where(pt.index == user_input)[0][0]
-    similar_items = sorted(list(enumerate(similarity_scores[index])), key=lambda x: x[1], reverse=True)[1:5]
+# Similarity calculation
+cosine_sim = cosine_similarity(tfidf_matrix, tfidf_matrix)
 
-    data = []
-    for i in similar_items:
-        item = []
-        temp_df = books[books['Book-Title'] == pt.index[i[0]]]
-        item.extend(list(temp_df.drop_duplicates('Book-Title')['Book-Title'].values))
-        item.extend(list(temp_df.drop_duplicates('Book-Title')['Book-Author'].values))
-        item.extend(list(temp_df.drop_duplicates('Book-Title')['Genre'].values))
+# Save the vectorizer and similarity matrix
+with open('cosine_sim.pkl', 'wb') as file:
+    pickle.dump(cosine_sim, file)
 
-        data.append(item)
+with open('vectorizer.pkl', 'wb') as file:
+    pickle.dump(vectorizer, file)
 
-    print(data)
+# Streamlit app
+st.title('Book Recommendation System')
 
-    return render_template('recommend.html',data=data)
+selected_book = st.selectbox('Select a book:', df['Title'])
 
-if __name__ == '__main__':
-    app.run(debug=True)
+if st.button('Show Recommendations'):
+    # Load the models
+    with open('cosine_sim.pkl', 'rb') as file:
+        cosine_sim = pickle.load(file)
+
+    with open('vectorizer.pkl', 'rb') as file:
+        vectorizer = pickle.load(file)
+
+    def get_recommendations(title, cosine_sim=cosine_sim):
+        idx = df.index[df['Title'] == title][0]
+        sim_scores = list(enumerate(cosine_sim[idx]))
+        sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+        sim_scores = sim_scores[1:6]
+        book_indices = [i[0] for i in sim_scores]
+        return df['Title'].iloc[book_indices]
+
+    recommendations = get_recommendations(selected_book)
+    st.write('Recommended Books:')
+    for book in recommendations:
+        st.write(book)
